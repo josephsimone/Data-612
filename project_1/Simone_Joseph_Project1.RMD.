@@ -1,0 +1,194 @@
+---
+title: "Data 612 - Project 1"
+author: "Joseph Simone"
+date: "2/11/2020"
+output:
+  html_document:
+      highlight: pygments
+      theme: cerulean
+      toc: true
+  html_notebook: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<STYLE>
+table {
+    border: 1px solid black;
+}
+th {
+    background-color: rgb(12, 99, 204);
+    color: white;
+    font-weight: bold;
+    padding: 20px 30px;
+}
+tr:nth-child(even) {
+    background-color: rgb(220,220,220);
+}
+tr:nth-child(odd) {
+    background-color: rgb(184, 174, 174);
+}
+</STYLE>
+
+
+```{r, message=FALSE, warning= FALSE}
+library(dplyr)
+library(tidyr)
+library(caTools)  
+```
+
+
+### Background
+
+For this project, the recommender system I would like to put into effevt would be one that would recommend Movies, more specifically the Star Wars Skywalker Film Franchise. 
+
+This is an industry, where the Ratings or Cristics Reviews for a specific Film could make or break a companies fiscal year. Therefore, there is an abundancy of data to be collected on these various Films. 
+
+### Data-Set
+
+First, I wanted to do was created my own smaller Data-Set of the Star Wars Films using a simple scaling metric to interpert and the same Critics spanning from 1977-2019. Therefore, I decided to use the website [Meta Critic](http://www.metacritic.com). 
+
+Since this website includes various Critics that use the same numerical ratings system of a 0-100 scale. In addition, this gave me the opportunity to scrap real Reviews from the time of the Film's release, instead of using arbitrary values.
+
+### Data Import
+
+```{r section1}
+star_wars_data <- read.csv("https://raw.githubusercontent.com/josephsimone/Data-612/master/project_1/star_wars_critic_ratings.csv")  
+colnames(star_wars_data) <- gsub("ï..Critics", "Critics", colnames(star_wars_data))
+star_wars_data
+```
+
+
+### Splitting Data into Training/Testing Sets 
+
+In this seection, the Data-Frame was first converted to long format. 
+
+Then split into training and testing sets based on 0.75 split ratio.
+
+```{r section2}
+split_star_wars_data <- star_wars_data %>% gather(key = Movie, value = Rating, -Critics)
+```
+
+
+```{r section3}
+set.seed(50)
+split <- sample.split(split_star_wars_data$Rating, SplitRatio = 0.75)
+```
+
+
+```{r section4}
+train_data_set <- split_star_wars_data
+train_data_set$Rating[!split] <- NA
+head(train_data_set)
+```
+
+
+```{r section5}
+test_data_set <- split_star_wars_data
+test_data_set$Rating[split] <- NA
+print("Test Dataset")
+head(test_data_set)
+```
+
+Since, there are now two different dataset randomly selected, it is time to move onto the RMSE calculations.
+
+
+```{r section6}
+raw_avg <- sum(train_data_set$Rating, na.rm = TRUE) / length(which(!is.na(train_data_set$Rating)))
+
+rmse_raw_train <- sqrt(sum((train_data_set$Rating[!is.na(train_data_set$Rating)] - raw_avg)^2) /
+                         length(which(!is.na(train_data_set$Rating))))
+rmse_raw_train
+```
+
+
+```{r section7}
+rmse_raw_test <- sqrt(sum((test_data_set$Rating[!is.na(test_data_set$Rating)] - raw_avg)^2) /
+                        length(which(!is.na(test_data_set$Rating))))
+rmse_raw_test
+```
+
+We can observe that RMSE values are significantly larger than expected in a smaller sample space.
+
+### Baseline Predictors
+
+```{r section8}
+Critics_bias <- train_data_set %>% filter(!is.na(Rating)) %>% 
+  group_by(Critics) %>%
+  summarise(sum = sum(Rating), count = n()) %>% 
+  mutate(bias = sum/count-raw_avg) %>%
+  select(Critics, CriticsBias = bias)
+CriticsBias<-Critics_bias$CriticsBias
+```
+
+
+```{r section9}
+Movie_bias <- train_data_set %>% filter(!is.na(Rating)) %>% 
+  group_by(Movie) %>%
+  summarise(sum = sum(Rating), count = n()) %>% 
+  mutate(bias = sum/count-raw_avg) %>%
+  select(Movie, MovieBias = bias)
+MovieBias<-Movie_bias$MovieBias
+```
+
+
+```{r section10}
+train_data_set <- train_data_set %>% left_join(Critics_bias, by = "Critics") %>%
+  left_join(Movie_bias, by = "Movie") %>%
+  mutate(RawAvg = raw_avg) %>%
+  mutate(Baseline = RawAvg + CriticsBias + MovieBias)
+train_data_set
+```
+
+
+```{r section11}
+test_data_set <- test_data_set %>% left_join(Critics_bias, by = "Critics") %>%
+  left_join(Movie_bias, by = "Movie") %>%
+  mutate(RawAvg = raw_avg) %>%
+  mutate(Baseline = RawAvg + CriticsBias + MovieBias)
+test_data_set
+```
+
+
+```{r section12}
+rmse_base_train <- sqrt(sum((train_data_set$Rating[!is.na(train_data_set$Rating)] - 
+                               train_data_set$Baseline[!is.na(train_data_set$Rating)])^2) /
+                          length(which(!is.na(train_data_set$Rating))))
+rmse_base_test <- sqrt(sum((test_data_set$Rating[!is.na(test_data_set$Rating)] - 
+                              test_data_set$Baseline[!is.na(test_data_set$Rating)])^2) /
+                         length(which(!is.na(test_data_set$Rating))))
+```
+
+### RMSE
+
+The Largest Bias are determined by the NA Critic's Reviews that did not review the movie.
+
+
+```{r section13}
+rmse_base_train
+rmse_base_test
+```
+
+
+The table below represents the RMSE values for both the Training and Testing Sets and the Raw Average and Baseline Predictors.
+
+
+```{r echo = FALSE}
+rmse <- as.data.frame(c(rmse_raw_train, rmse_base_train, rmse_raw_test, rmse_base_test))
+colnames(rmse) <- "RMSE"
+rownames(rmse) <- c("Training: Raw Average",
+                    "Training: Baseline Predictor",
+                    "Testing: Raw Average",
+                    "Testing: Baseline Predictor")
+knitr::kable(rmse, format = "html") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"), 
+                            full_width = FALSE)
+```
+
+### Summary
+
+The RMSE values improved  the Baseline Predictors in both the Training and Test Sets. 
+
+Even with a smaller Data-Set that included incomplete values, this was enough information to be able to visualize and apply specific Movies and Critic bias into our model.
