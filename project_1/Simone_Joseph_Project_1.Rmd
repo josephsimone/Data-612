@@ -3,11 +3,7 @@ title: "Data 612 - Project 1"
 author: "Joseph Simone"
 date: "2/11/2020"
 output:
-  html_document:
-      highlight: pygments
-      theme: cerulean
-      toc: true
-  html_notebook: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -34,15 +30,15 @@ tr:nth-child(odd) {
 
 
 ```{r, message=FALSE, warning= FALSE}
-library(caTools)  
 library(dplyr)
 library(tidyr)
+library(caTools)  
 ```
 
 
 ### Background
 
-For this project, the recommender system I would like to put into effevt would be one that would recommend Movies, more specifically the Star Wars Skywalker Film Franchise. 
+For this project, the recommender system I would like to put into effevt would be one that would recommend Films, more specifically the Star Wars Skywalker Film Franchise. 
 
 This is an industry, where the Ratings or Cristics Reviews for a specific Film could make or break a companies fiscal year. Therefore, there is an abundancy of data to be collected on these various Films. 
 
@@ -68,27 +64,27 @@ In this seection, the Data-Frame was first converted to long format.
 Then split into training and testing sets based on 0.75 split ratio.
 
 ```{r section2}
-split_star_wars_data <- star_wars_data %>% gather(key = Movie, value = Rating, -Critics)
+split_star_wars_data <- star_wars_data %>% gather(key = Film, value = Review, -Critics)
 ```
 
 
 ```{r section3}
 set.seed(50)
-split <- sample.split(split_star_wars_data$Rating, SplitRatio = 0.75)
+split <- sample.split(split_star_wars_data$Review, SplitRatio = 0.75)
 ```
 
 
 ```{r section4}
 train_data_set <- split_star_wars_data
-train_data_set$Rating[!split] <- NA
+train_data_set$Review[!split] <- NA
 head(train_data_set)
 ```
 
 
 ```{r section5}
 test_data_set <- split_star_wars_data
-test_data_set$Rating[split] <- NA
-print("Test Dataset")
+test_data_set$Review[split] <- NA
+
 head(test_data_set)
 ```
 
@@ -96,17 +92,17 @@ Since, there are now two different dataset randomly selected, it is time to move
 
 
 ```{r section6}
-raw_avg <- sum(train_data_set$Rating, na.rm = TRUE) / length(which(!is.na(train_data_set$Rating)))
+raw_avg <- sum(train_data_set$Review, na.rm = TRUE) / length(which(!is.na(train_data_set$Review)))
 
-rmse_raw_train <- sqrt(sum((train_data_set$Rating[!is.na(train_data_set$Rating)] - raw_avg)^2) /
-                         length(which(!is.na(train_data_set$Rating))))
+rmse_raw_train <- sqrt(sum((train_data_set$Review[!is.na(train_data_set$Review)] - raw_avg)^2) /
+                         length(which(!is.na(train_data_set$Review))))
 rmse_raw_train
 ```
 
 
 ```{r section7}
-rmse_raw_test <- sqrt(sum((test_data_set$Rating[!is.na(test_data_set$Rating)] - raw_avg)^2) /
-                        length(which(!is.na(test_data_set$Rating))))
+rmse_raw_test <- sqrt(sum((test_data_set$Review[!is.na(test_data_set$Review)] - raw_avg)^2) /
+                        length(which(!is.na(test_data_set$Review))))
 rmse_raw_test
 ```
 
@@ -115,9 +111,9 @@ We can observe that RMSE values are significantly larger than expected in a smal
 ### Baseline Predictors
 
 ```{r section8}
-Critics_bias <- train_data_set %>% filter(!is.na(Rating)) %>% 
+Critics_bias <- train_data_set %>% filter(!is.na(Review)) %>% 
   group_by(Critics) %>%
-  summarise(sum = sum(Rating), count = n()) %>% 
+  summarise(sum = sum(Review), count = n()) %>% 
   mutate(bias = sum/count-raw_avg) %>%
   select(Critics, CriticsBias = bias)
 CriticsBias<-Critics_bias$CriticsBias
@@ -125,45 +121,45 @@ CriticsBias<-Critics_bias$CriticsBias
 
 
 ```{r section9}
-Movie_bias <- train_data_set %>% filter(!is.na(Rating)) %>% 
-  group_by(Movie) %>%
-  summarise(sum = sum(Rating), count = n()) %>% 
+Film_bias <- train_data_set %>% filter(!is.na(Review)) %>% 
+  group_by(Film) %>%
+  summarise(sum = sum(Review), count = n()) %>% 
   mutate(bias = sum/count-raw_avg) %>%
-  select(Movie, MovieBias = bias)
-MovieBias<-Movie_bias$MovieBias
+  select(Film, FilmBias = bias)
+FilmBias<-Film_bias$FilmBias
 ```
 
 
 ```{r section10}
 train_data_set <- train_data_set %>% left_join(Critics_bias, by = "Critics") %>%
-  left_join(Movie_bias, by = "Movie") %>%
+  left_join(Film_bias, by = "Film") %>%
   mutate(RawAvg = raw_avg) %>%
-  mutate(Baseline = RawAvg + CriticsBias + MovieBias)
+  mutate(Baseline = RawAvg + CriticsBias + FilmBias)
 train_data_set
 ```
 
 
 ```{r section11}
 test_data_set <- test_data_set %>% left_join(Critics_bias, by = "Critics") %>%
-  left_join(Movie_bias, by = "Movie") %>%
+  left_join(Film_bias, by = "Film") %>%
   mutate(RawAvg = raw_avg) %>%
-  mutate(Baseline = RawAvg + CriticsBias + MovieBias)
+  mutate(Baseline = RawAvg + CriticsBias + FilmBias)
 test_data_set
 ```
 
 
 ```{r section12}
-rmse_base_train <- sqrt(sum((train_data_set$Rating[!is.na(train_data_set$Rating)] - 
-                               train_data_set$Baseline[!is.na(train_data_set$Rating)])^2) /
-                          length(which(!is.na(train_data_set$Rating))))
-rmse_base_test <- sqrt(sum((test_data_set$Rating[!is.na(test_data_set$Rating)] - 
-                              test_data_set$Baseline[!is.na(test_data_set$Rating)])^2) /
-                         length(which(!is.na(test_data_set$Rating))))
+rmse_base_train <- sqrt(sum((train_data_set$Review[!is.na(train_data_set$Review)] - 
+                               train_data_set$Baseline[!is.na(train_data_set$Review)])^2) /
+                          length(which(!is.na(train_data_set$Review))))
+rmse_base_test <- sqrt(sum((test_data_set$Review[!is.na(test_data_set$Review)] - 
+                              test_data_set$Baseline[!is.na(test_data_set$Review)])^2) /
+                         length(which(!is.na(test_data_set$Review))))
 ```
 
 ### RMSE
 
-The Largest Bias are determined by the NA Critic's Reviews that did not review the movie.
+The Largest Bias are determined by the NA Critic's Reviews that did not review the Film.
 
 
 ```{r section13}
@@ -182,7 +178,7 @@ rownames(rmse) <- c("Training: Raw Average",
                     "Training: Baseline Predictor",
                     "Testing: Raw Average",
                     "Testing: Baseline Predictor")
-knitr::kable(rmse, format = "html") %>%
+knitr::kable(rmse) %>%
   kableExtra::kable_styling(bootstrap_options = c("striped", "hover"), 
                             full_width = FALSE)
 ```
@@ -191,4 +187,4 @@ knitr::kable(rmse, format = "html") %>%
 
 The RMSE values improved  the Baseline Predictors in both the Training and Test Sets. 
 
-Even with a smaller Data-Set that included incomplete values, this was enough information to be able to visualize and apply specific Movies and Critic bias into our model.
+Even with a smaller Data-Set that included incomplete values, this was enough information to be able to visualize and apply specific Films and Critic bias into our model.
