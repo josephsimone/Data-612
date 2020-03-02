@@ -1,0 +1,375 @@
+---
+title: "Data 612 Project# 2"
+author: "Joseph Simone"
+date: "03/01/2020"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    theme: yeti
+    highlight: pygments
+  pdf_document:
+    df_print: tibble
+    toc: true
+    toc_depth: 2
+---
+
+<STYLE>
+table {
+    border: 1px solid black;
+}
+th {
+    background-color: rgb(12, 99, 204);
+    color: white;
+    font-weight: bold;
+    padding: 20px 30px;
+}
+tr:nth-child(even) {
+    background-color: rgb(220,220,220);
+}
+tr:nth-child(odd) {
+    background-color: rgb(184, 174, 174);
+}
+</STYLE>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r , message=FALSE, warning=FALSE}
+library(tidyverse)
+library(kableExtra)
+library(knitr)
+library(recommenderlab)
+library(dplyr)
+```
+
+# Content-Based and Collaborative Filtering 
+
+## Overview
+For assignment 2, start with an existing dataset of user-item ratings, such as our toy booksdataset,
+MovieLens, Jester [http://eigentaste.berkeley.edu/dataset/] or another dataset of your choosing.
+
+Implement at least two of these recommendation algorithms:<br />
+- Content-Based Filtering<br />
+- User-User Collaborative Filtering<br />
+- Item-Item Collaborative Filtering<br />
+
+## Data Importation
+
+The dataset I chose for the project is the MovieLens (ml-latest-small) Data-Set. This dataset was created by 610 users between March 29, 1996 and September 24, 2018, emcompassing 9742 movies.
+
+MovieLens DataSet: Posted to my [Github](https://github.com/josephsimone/Data-612/tree/master/project_2/Movie_Lens)
+
+```{r}
+ratings <- read.csv(paste0("https://raw.githubusercontent.com/josephsimone/Data-612/master/project_2/Movie_Lens/ratings.csv"))
+movies <- read.csv(paste0("https://raw.githubusercontent.com/josephsimone/Data-612/master/project_2/Movie_Lens/movies.csv"))
+```
+
+
+```{r}
+movie_matrix <- ratings %>% 
+  select(-timestamp) %>% 
+  spread(movieId, rating)
+```
+
+
+```{r}
+row.names(movie_matrix) <- movie_matrix[,1]
+movie_matrix <- movie_matrix[-c(1)]
+movie_matrix <- as(as.matrix(movie_matrix), "realRatingMatrix")
+
+```
+
+
+```{r}
+movie_matrix
+```
+
+## Data Exploration & Data Preporation
+
+
+```{r}
+num_ratings <- as.vector(movie_matrix@data)
+num_ratings <- num_ratings[num_ratings != 0]
+ggplot() + aes(num_ratings) + 
+  geom_histogram(binwidth = 0.5) +
+  xlab("Rating") + ylab("Number of Ratings")
+```
+
+
+```{r}
+films <- movie_matrix[rowCounts(movie_matrix) > 50, colCounts(movie_matrix) > 50]
+films
+```
+
+According to the newly created Ratings Matrix, we may encounter some bias. 
+
+Nevertheless, let's explore a Distribution Plot 
+
+```{r}
+avg_rating <- rowMeans(films)
+ggplot() + aes(avg_rating) + 
+  geom_histogram(binwidth = 0.1) +
+  xlab("Average") + ylab("Number of Ratings")
+```
+
+#### Normalization 
+
+```{r}
+norm_films <- normalize(films)
+avg_rating <- round(rowMeans(norm_films),5)
+table(avg_rating)
+```
+
+Normalization of the mean to 0 on 378 rows. 
+
+#### Comparision of Non-Normalized & Normalized DataSets.
+
+```{r}
+min_items <- quantile(rowCounts(films), 0.95)
+min_users <- quantile(colCounts(films), 0.95)
+
+image(films[rowCounts(films) > min_items, 
+                 colCounts(films) > min_users], 
+      main = "Top Users and Movies - Heatmap/Non-Normalized")
+```
+
+
+```{r}
+image(norm_films[rowCounts(norm_films) > min_items, 
+                 colCounts(norm_films) > min_users], 
+      main = "Top Users and Movies - Heatmap/Normalized")
+```
+
+
+## Item to Item Collaborative Filtering
+
+#### Test & Training Sets
+
+Splitting Data - Training Set 80% & Testing Set 20%
+
+```{r}
+set.seed(60)
+temp_train <- sample(x = c(TRUE, FALSE), size = nrow(films),
+                      replace = TRUE, prob = c(0.8, 0.2))
+```
+
+
+```{r}
+movie_train <- films[temp_train, ]
+movie_test <- films[!temp_train, ]
+```
+
+
+```{r}
+movie_train
+movie_test
+```
+
+#### Modeling 
+
+```{r}
+movieIBCF <- Recommender(movie_train, method = "IBCF" ,param=list(normalize = "Z-score",method="Jaccard"))
+```
+
+#### Similarity Matrix 
+
+visualization of the Item Similarity Matrix
+
+```{r}
+similarity_items <- similarity(movie_train[, 1:4], method = "cosine", which = "items")
+
+image(as.matrix(similarity_items), main = "Item similarity")
+```
+
+
+Top Ten Movies and other Movies that are similar. 
+
+```{r}
+sim_model <- getModel(movieIBCF)$sim
+top_pick <- order(colSums(sim_model > 0), decreasing = TRUE)[1:10]
+top_films <- as.data.frame(as.integer(rownames(sim_model)[top_pick]))
+```
+
+
+```{r}
+colnames(top_films) <- c("movieId")
+movie_data <- top_films %>% inner_join(movies, by = "movieId") %>% select(Movie = "title")
+knitr::kable(movie_data, format = "html") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+##### Recommendations Using Test Set
+
+```{r}
+preditors <- predict(movieIBCF, newdata = movie_test, n = 6) 
+preditors
+```
+
+##### Movie Ratings for the First User
+
+Taking in consideration the First User, pulling Movie Recommendations
+
+```{r}
+
+first_user <- as.data.frame(movie_test@data[1,movie_test@data[1,]>0])
+colnames(first_user) <- c("Rating")
+first_user[c("movieId")] <- as.integer(rownames(first_user))
+first_user_data <- movies %>% 
+  inner_join(first_user, by = "movieId") %>% 
+  select(Movie = "title", Rating) %>%
+  arrange(desc(Rating))
+knitr::kable(first_user_data, format = "html") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+##### Recommendations for First User
+
+```{r}
+
+first_recommendation <- preditors@itemLabels[preditors@items[[1]]]
+first_recommendation <- as.data.frame(as.integer(first_recommendation))
+colnames(first_recommendation) <- c("movieId")
+first_recommendation_data <- first_recommendation %>% inner_join(movies, by = "movieId") %>% select(Movie = "title")
+knitr::kable(first_recommendation_data, format = "html") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+
+
+## User to User Collaborative Filtering 
+
+
+```{r}
+(movieUBCF <- Recommender(movie_train, method = "UBCF",param=list(normalize = "Z-score",method="Jaccard",nn=5)))
+```
+
+#### Modeling
+
+```{r}
+( predicted_UBCF <- predict(movieUBCF, newdata = movie_test, n = 6) )
+```
+
+#### Recommendations for First User
+Taking into account the first user again, let's explore some recommendations.
+
+```{r}
+user_recommendation <- predicted_UBCF@itemLabels[predicted_UBCF@items[[1]]]
+user_recommendation <- as.data.frame(as.integer(user_recommendation))
+colnames(user_recommendation) <- c("movieId")
+user_data <- user_recommendation %>% inner_join(movies, by = "movieId") %>% select(Movie = "title")
+knitr::kable(user_data, format = "html") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+
+
+#### Normalization 
+
+```{r}
+movie_UBCF <- Recommender(movie_train, method = "UBCF", parameter = list(normalize = NULL))
+predicted_UBCF <- predict(movie_UBCF, newdata = movie_test, n = 6)
+movie_recommendation <- predicted_UBCF@itemLabels[predicted_UBCF@items[[1]]]
+movie_recommendation <- as.data.frame(as.integer(movie_recommendation))
+colnames(movie_recommendation) <- c("movieId")
+movie_data <- movie_recommendation %>% inner_join(movies, by = "movieId") %>% select(Movie = "title")
+knitr::kable(movie_data, format = "html") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+
+#### Evaluation of Models
+
+In this Section, we will be creating an evaluation scheme to evaluate the Recommendation System's Popularity.
+ 
+
+Evaluated at: <br />
+ 
+- $Top1$<br />
+- $Top3$<br />
+- $Top5$<br />
+- $Top10$<br />
+- $Top15$<br />
+- $Top20$<br /> 
+ 
+
+Determining the amount of time it takes our Recommedation System to serve up 'n' Recommedations.
+
+```{r}
+model_eval<- evaluationScheme(as(films, "realRatingMatrix"), 
+                         method = "split", 
+                         train = 0.7, 
+                         given = 3,
+                         goodRating = 5)
+```
+
+
+```{r}
+preditor1 <- predict(movieIBCF, getData(model_eval, "known"), type = "ratings")
+preditor2 <- predict(movie_UBCF, getData(model_eval, "known"), type = "ratings")
+```
+
+
+```{r}
+final_eval <- rbind(
+  IBCF = calcPredictionAccuracy(preditor1, getData(model_eval, "unknown")),
+  UBCF = calcPredictionAccuracy(preditor2, getData(model_eval, "unknown")))
+
+final_eval
+```
+
+
+
+```{r}
+rec_scheme <- evaluationScheme(as(films, "realRatingMatrix"), 
+                        method = "cross",
+                        k = 4, 
+                        given = 3,
+                        goodRating=5)
+```
+
+
+```{r}
+solutions <- evaluate(rec_scheme, 
+                    method = "IBCF", 
+                    type = "topNList",
+                    n = c(1, 3, 5, 10, 15, 20))
+```
+
+
+```{r}
+
+solutions2 <- evaluate(rec_scheme, 
+                    method = "UBCF", 
+                    type = "topNList",
+                    n = c(1, 3, 5, 10, 15, 20))
+```
+
+```{r}
+getConfusionMatrix(solutions)[[1]]
+```
+
+```{r}
+plot(solutions, "prec/rec", annotate=TRUE)
+```
+
+```{r}
+getConfusionMatrix(solutions2)[[1]]
+```
+
+```{r}
+plot(solutions2, "prec/rec", annotate=TRUE)
+```
+
+
+## Conclusion 
+
+I am an avid IMDB and Netflix User and my peers often refer to me as a cinephile, or lover of motion picture cinema. Thererfore, when tasked with this project allows using the MovieLens DataSet to constructRecommender Systems, this was the first option for me. This offered me the opportunitry to explore Recommender Systems offered in the CRAN R package <mark>recommenderlab</mark>. I would like to further explore not only this package in future projects but this package as well.
+
