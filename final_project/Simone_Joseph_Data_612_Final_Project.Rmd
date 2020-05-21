@@ -1,0 +1,971 @@
+---
+title: "Data 612 Final Project"
+subtitle: "What2Watch - Recommendation System for Movies"
+author: "Joseph Simone"
+date: "May 19, 2020"
+output:
+  html_document:
+    df_print: paged
+    highlight: pygments
+    theme: sandstone
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+## Overview
+
+For this project, the goal was to develop and deploy a Collaborative Filtering Recommender System (CFR) for Movie Recommendations. 
+
+A Collaborative Filtering approach consists of only the User's Preferences, therefore, does not factors in the values or features of the particular variable being recommended.
+
+In addition, the [Movie Lens Dataset](http://grouplens.org/datasets/movielens/latest) was used to gerenate values for this Recommendation System. 
+
+After the Trained CFR Model was successfully implemented, this system was deployed in a Shiny R Application. 
+
+
+```{r libs, message=FALSE, warning=FALSE, echo=FALSE}
+library(recommenderlab)
+library(ggplot2)
+library(data.table)
+library(reshape2)
+```
+
+## The Data
+
+The data for this project is the MovieLens Dataset, which can be found here [here](http://grouplens.org/datasets/movielens/latest). 
+
+Containing 105339 ratings and 6138 tag applications, across 10329 movies, rated by 668 users. 
+
+The zipfile downloaded from the above link contained four files: *links.csv*, *movies.csv*, *ratings.csv* and *tags.csv*. 
+
+This system implements the use of the files *movies.csv* and *ratings.csv*.
+
+```{r}
+movies <- read.csv("https://raw.githubusercontent.com/josephsimone/Data-612/master/final_project/movies.csv",stringsAsFactors=FALSE)
+ratings <- read.csv("https://raw.githubusercontent.com/josephsimone/Data-612/master/final_project/ratings.csv")
+
+```
+
+Decscription of *movies* file:
+
+```{r}
+head(movies)
+```
+
+Summary of  of *ratings* file:
+
+```{r}
+summary(ratings$rating)
+head(ratings)
+```
+
+In for this to function properly, both the `usersId` and `movieId` will have to be changed from their data types of integers to factors. 
+
+In addition, the genres of the movies will ne to be reformatted.
+
+## Data Processing
+
+First, the movie's genres will have to be converted into a one-hot encoding format. 
+
+This will serve as the backbone of how users will be able to search for the movies they have watched within specific genres in the long format. 
+
+### Extract a list of genres
+
+```{r}
+g <- as.data.frame(movies$g, stringsAsFactors=FALSE)
+library(data.table)
+g2 <- as.data.frame(tstrsplit(g[,1], '[|]', 
+                                   type.convert=TRUE), 
+                         stringsAsFactors=FALSE)
+colnames(g2) <- c(1:10)
+
+gl <- c("Action", "Adventure", "Animation", "Children", 
+                "Comedy", "Crime","Documentary", "Drama", "Fantasy",
+                "Film-Noir", "Horror", "Musical", "Mystery","Romance",
+                "Sci-Fi", "Thriller", "War", "Western") # we have 18 genres in total
+
+gm <- matrix(0,10330,18) #empty matrix, 10330=no of movies+1, 18=no of genres
+gm[1,] <- gl #set first row to genre list
+colnames(gm) <- gl #set column names to genre list
+
+#iterate through matrix
+for (i in 1:nrow(g2)) {
+  for (c in 1:ncol(g2)) {
+    genmat_col = which(gm[1,] == g2[i,c])
+    gm[i+1,genmat_col] <- 1
+  }
+}
+
+#convert into dataframe
+gm2 <- as.data.frame(gm[-1,], stringsAsFactors=FALSE) #remove first row, which was the genre list
+for (c in 1:ncol(gm2)) {
+  gm2[,c] <- as.integer(gm2[,c])
+} #convert from characters to integers
+
+head(gm2)
+```
+
+### Matrix of Movies and their Genres
+
+The creation of a `search matrix` will act as a database of a movie by  their genre(s). 
+
+```{r}
+search_movies <- cbind(movies[,1:2], g2)
+head(search_movies)
+```
+From here we can see the data begin to grow in size and sparcity.
+
+Now each movie will correspond to one or more genres. 
+
+### realRatingMatrix Creation
+
+This project utilizes the use of the `recommenderlab` R package. 
+
+In order to build a recommendation engine within `recommenderlab`, the conversion of the newly created `ratings matrix` into a Sparse Matrix known as a `realRatingMatrix`.
+
+```{r}
+rm <- dcast(ratings, userId~movieId, value.var = "rating", na.rm=FALSE)
+rm <- as.matrix(rm[,-1])
+```
+
+
+```{r}
+rm <- as(rm, "realRatingMatrix")
+rm
+```
+
+
+## Recommendation Models
+
+The *recommenderlab* package contains preconstructed models for the use of recommendation algorithms:
+
+```{r}
+recommender_models <- recommenderRegistry$get_entries(dataType = "realRatingMatrix")
+names(recommender_models)
+lapply(recommender_models, "[[", "description")
+```
+
+This project will utilize both the IBCF and UBCF Models for comparison and performance. 
+
+```{r}
+recommender_models$IBCF_realRatingMatrix$parameters
+recommender_models$UBCF_realRatingMatrix$parameters
+```
+
+Collaborative Filtering is based on the measuring between the similarity of users or between items. 
+
+Within *recommenderlab*, the supported methods to computate similarities are *cosine, pearson*, and *jaccard*.
+
+## Exploration of Similarity Data
+
+Next, determing how similar the first four users are with each other.
+
+```{r}
+similarity_users <- similarity(rm[1:4, ], 
+                               method = "cosine", 
+                               which = "users")
+as.matrix(similarity_users)
+image(as.matrix(similarity_users), main = "User similarity")
+```
+
+
+Using the same approach, for the first four movies.
+
+```{r}
+similarity_items <- similarity(rm[, 1:4], method =
+                                 "cosine", which = "items")
+as.matrix(similarity_items)
+image(as.matrix(similarity_items), main = "Movies similarity")
+```
+
+## Data Exploration Continued
+
+Now, exploring the second data file's values of `ratings`. 
+
+```{r}
+rating_values <- as.vector(rm@data)
+unique(rating_values) # what are unique values of ratings
+
+count_ratings <- table(rating_values) # what is the count of each rating value
+count_ratings
+```
+
+There are 11 unique `rating` values. 
+
+### Distribution of Ratings
+
+Arating equal to 0 represents a missing value, therefore, them from the dataset before visualizing the results.
+
+```{r}
+rating_values <- rating_values[rating_values != 0]
+rating_values <- factor(rating_values)
+
+qplot(rating_values) + 
+  ggtitle("Ratings Distrubtions")
+```
+
+The most common rating is $4$. 
+
+The majority of movies are rated with a score of 3 or higher. 
+
+### Number of Views ~ Top Movies
+
+```{r}
+views_per_movie <- colCounts(rm)
+
+count_views <- data.frame(movie = names(views_per_movie),
+                          views = views_per_movie)
+count_views <- count_views[order(count_views$views, 
+                                 decreasing = TRUE), ]
+count_views$title <- NA
+```
+
+
+```{r}
+for (i in 1:10325){
+  count_views[i,3] <- as.character(subset(movies, 
+                                         movies$movieId == count_views[i,1])$title)
+}
+```
+
+
+```{r}
+count_views[1:6,]
+```
+
+
+```{r}
+ggplot(count_views[1:6, ], aes(x = title, y = views)) +
+  geom_bar(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+ggtitle("Views of Top Movies")
+```
+
+**"Pulp Fiction (1994)"** is the most watched Movie, with  **"Forrest Gump (1994)"** being the second.
+
+### Distribution of the Average Ratings
+
+To find the Top-Rated Movies, the average rating for each was calculated.
+
+```{r}
+average_ratings <- colMeans(rm)
+
+qplot(average_ratings) + 
+  stat_bin(binwidth = 0.1) +
+  ggtitle("Distribution of the average movie rating")
+
+average_ratings_relevant <- average_ratings[views_per_movie > 50] 
+qplot(average_ratings_relevant) + 
+  stat_bin(binwidth = 0.1) +
+  ggtitle(paste("Distribution of Relevant Average Ratings"))
+```
+
+The first graph represents the distribution of the average movie rating. The highest value is ~ 3, with a few movies whose rating is either 1 or 5.
+
+This is most likely due to the fact that these movies received a rating from  only a few users, thererfore we should exclude these ratings. 
+
+The movies where number of views is below the defined threshold of 50 we removed. This creates a more narrow subset of the most relevant movies. 
+
+The second graph represents the distribution of the relevant average ratings. The rankings are between 2.16 and 4.45.  The highest value changes, and now it is ~ 4.
+
+
+### Data Preparation
+
+#### Part 1 - Revevant Data
+
+In order to select relevant data, defining the minimum number of users per rated movie and the minimum views per movie as 50
+
+```{r}
+movie_ratings <- rm[rowCounts(rm) > 50,
+                             colCounts(rm) > 50]
+movie_ratings
+#rm
+```
+
+The previous rating-matrix had 668 users and 10325 movies, now the newly create most relevant rating-matrix contains 420 users and 447 movies.
+
+```{r}
+average_ratings_per_user <- rowMeans(movie_ratings)
+qplot(average_ratings_per_user) + stat_bin(binwidth = 0.1) +
+  ggtitle("Distribution of Average Ratings, per User")
+```
+
+
+#### Part 2 - Normalization
+
+When dealing with a user pool who rates at a high or low ratings can result in bias.
+
+In an effort to circumvent this problem, the normalization of the data was need
+
+```{r}
+movie_ratings_norm <- normalize(movie_ratings)
+sum(rowMeans(movie_ratings_norm) > 0.00001)
+```
+
+Now, I visualize the normalized matrix for the top movies. It is colored now because the data is continuous:
+
+```{r}
+min_movies <- quantile(rowCounts(movie_ratings), 0.95)
+min_users <- quantile(colCounts(movie_ratings), 0.95)
+image(movie_ratings_norm[rowCounts(movie_ratings) > min_movies,
+                          colCounts(movie_ratings) > min_users], 
+main = "Heatmap - Top Users & Movies")
+```
+
+There are still some lines that seem to be more blue or more red. 
+
+This is due to the above chart is visualizing only the top movies. 
+
+However, the average rating is still 0 for each user.
+
+#### Part 3 - Convert Data to Binary
+
+In order for the recommendation models to work well with the data we already having, conversion to binary data, will be useful. This is done by defining a matrixta encompassing 0's and 1's. 
+
+The 0's will be either treated as missing values or as bad ratings.
+
+*Set-up*
+
+* Define a matrix having 1 if the user rated the movie, and 0 otherwise. 
+    - In this case, the information about the rating is lost.
+* Define a matrix having 1 if the rating is above or equal to a definite threshold (for example, 3), and 0 otherwise. 
+    - In this case, giving a bad rating to a movie is equivalent to not having rated it.
+
+Depending on the context, one option might be more suited to the needs of the models, depending on the context.
+
+Next, defining of two matrices following the two different "set-up" options which visualize 5%  portion of each of newly created binary matrices.
+
+> Option 1:  Define a matrix equal to 1, if the movie has been watched
+
+```{r}
+movie_ratings_watched <- binarize(movie_ratings, minRating = 1)
+boolean_min_movies <- quantile(rowCounts(movie_ratings), 0.95)
+boolean_min_users <- quantile(colCounts(movie_ratings), 0.95)
+image(movie_ratings_watched[rowCounts(movie_ratings) > boolean_min_movies,
+                             colCounts(movie_ratings) > boolean_min_users], 
+main = "Heatmap - Top Users & Movies")
+```
+
+> Option 2: Define a matrix equal to 1 if the cell has a rating above the threshold
+
+```{r}
+movie_ratings_good <- binarize(movie_ratings, minRating = 3)
+image(movie_ratings_good[rowCounts(movie_ratings) > boolean_min_movies, 
+colCounts(movie_ratings) > boolean_min_users], 
+main = "Heatmap - Top Users & Movies")
+```
+
+In the second heatmap, there are more white cells which means that there are more movies with no or bad ratings than movies that were not viewed.
+
+## ITEM-BASED Collaborative Filtering Model
+
+For this type of model, we will first need to create a `rating-matrix`, which rows corresponds to users and columns corresponds to items. 
+
+This approach is based on:
+
+1. For each two items, measure similar ratings by similar users
+2. For each item, identify the `k` most similar items
+3. For each user, identify the items that are most similar to the user's ratings or reviews
+
+### Train & Test Sets
+
+Built the model using $80%$ of the total dataset as a `training set`, and $20%$ as a `test set`. 
+
+```{r}
+which_train <- sample(x = c(TRUE, FALSE), 
+                      size = nrow(movie_ratings),
+                      replace = TRUE, 
+                      prob = c(0.8, 0.2))
+
+movie_train <- movie_ratings[which_train, ]
+movie_test <- movie_ratings[!which_train, ]
+
+
+```
+
+### Build Model
+
+Let's have a look at the default parameters of IBCF model. Here, *k* is the number of items to compute the similarities among them in the first step. After, for each item, the algorithm identifies its *k* most similar items and stores the number. *method* is a similarity funtion, which is *Cosine* by default, may also be *pearson*. I create the model using the default parameters of method = Cosine and k=30.
+
+```{r}
+recommender_models <- recommenderRegistry$get_entries(dataType ="realRatingMatrix")
+recommender_models$IBCF_realRatingMatrix$parameters
+
+movie_model <- Recommender(data = movie_train, 
+                          method = "IBCF",
+                          parameter = list(k = 30))
+```
+
+
+```{r}
+movie_model
+class(movie_model)
+```
+
+### Exploring Model
+
+```{r}
+results_model <- getModel(movie_model)
+```
+
+
+```{r}
+class(results_model$sim)
+dim(results_model$sim)
+```
+
+
+```{r}
+n_items_top <- 20
+image(results_model$sim[1:n_items_top, 1:n_items_top],
+      main = "Heatmap - First Rows and Columns")
+```
+
+
+```{r}
+row_sums <- rowSums(results_model$sim > 0)
+table(row_sums)
+col_sums <- colSums(results_model$sim > 0)
+qplot(col_sums) + stat_bin(binwidth = 1) + ggtitle("Distribution of Column Count")
+```
+
+This newly created `dgCMatrix` similarity matrix has dimensions are 447 x 447, which is equal to the number of items. 
+
+The Heatmap shows 20 first items show that many values are equal to 0. 
+
+This is due to each row contains only $k = 30$ elements that are greater than 0. 
+
+The number of non-null elements for each column depends on the amount the corresponding movie was included in the top k of another movie. 
+
+Therfore, this matrix is not simmetric, which is also the same in our model. 
+
+The chart of the distribution of the number of elements respresents, by column, that there are a few movies that are similar to others. 
+
+
+## IBCF Recommendation System Implementation
+
+
+```{r}
+n_recommended <- 10 
+
+model_predictions <- predict(object = movie_model, 
+                          newdata = movie_test, 
+                          n = n_recommended)
+```
+
+
+```{r}
+model_predictions
+```
+
+Let's explore the results of the recommendations for the First User
+
+```{r}
+user_recommendation_1 <- model_predictions@items[[1]] 
+movies_user_1 <- model_predictions@itemLabels[user_recommendation_1]
+movies_user_2 <- movies_user_1
+```
+
+
+```{r}
+for (i in 1:10){
+  movies_user_2[i] <- as.character(subset(movies, 
+                                         movies$movieId == movies_user_1[i])$title)
+}
+```
+
+
+```{r}
+movies_user_2
+```
+
+
+```{r}
+matrix_recommendation <- sapply(model_predictions@items, 
+                      function(x){ as.integer(colnames(movie_ratings)[x]) }) 
+matrix_recommendation[,1:4]
+```
+
+Here, the columns represent the first 4 users, and the rows are the *movieId* values of recommended 10 movies.
+
+Now, let's identify the most recommended movies. The following image shows the distribution of the number of items for IBCF:
+
+```{r}
+num_items <- factor(table(matrix_recommendation))
+
+chart_title <- "Distribution of Items for IBCF"
+qplot(num_items) + ggtitle(chart_title)
+```
+
+
+```{r}
+num_items_sorted <- sort(num_items, decreasing = TRUE)
+num_items_top <- head(num_items_sorted, n = 4)
+table_top <- data.frame(as.integer(names(num_items_top)),
+                       num_items_top)
+```
+
+
+```{r}
+for (i in 1:4){
+  table_top[i,1] <- as.character(subset(movies, 
+                                         movies$movieId == table_top[i,1])$title)
+}
+```
+
+
+```{r}
+colnames(table_top) <- c("Movie Title", "# Items")
+head(table_top)
+```
+
+Most of the movies have been recommended only a few times, and a few movies have been recommended more than 5 times.
+
+IBCF recommends items on the basis of the similarity matrix. It's an eager-learning model, that is, once it's built, it doesn't need to access the initial data. For each item, the model stores the k-most similar, so the amount of information is small once the model is built. This is an advantage in the presence of lots of data.
+
+In addition, this algorithm is efficient and scalable, so it works well with big rating matrices.
+
+## USER-BASED Collaborative Filtering Model
+
+Now, I will use the user-based approach. According to this approach, given a new user, its similar users are first identified. Then, the top-rated items rated by
+similar users are recommended. 
+
+For each new user, these are the steps:
+
+1. Measure how similar each user is to the new one. Like IBCF, popular similarity measures are correlation and cosine.
+2. Identify the most similar users. The options are:
+
+   * Take account of the top k users (k-nearest_neighbors)
+   * Take account of the users whose similarity is above a defined threshold
+   
+3. Rate the movies rated by the most similar users. The rating is the average
+rating among similar users and the approaches are:
+
+   * Average rating
+   * Weighted average rating, using the similarities as weights
+   
+4. Pick the top-rated movies.
+
+### Build Model
+
+Again, let's first check the default parameters of UBCF model. Here, *nn* is a number of similar users, and *method* is a similarity function, which is *cosine* by default. I build a recommender model leaving the parameters to their defaults and using the training set.
+
+```{r}
+recommender_models <- recommenderRegistry$get_entries(dataType ="realRatingMatrix")
+recommender_models$UBCF_realRatingMatrix$parameters
+movie_model <- Recommender(data = movie_train, method = "UBCF")
+movie_model
+results_model <- getModel(movie_model)
+```
+
+
+```{r}
+results_model$data
+```
+
+### UBCF Recommendation System Implementation
+
+In the same way as the IBCF, I now determine the top ten recommendations for each new user in the test set. 
+
+```{r }
+n_recommended <- 10
+model_predictions <- predict(object = movie_model,
+                          newdata = movie_test, 
+                          n = n_recommended) 
+model_predictions
+```
+
+## Explore results
+> First Four Users
+
+```{r}
+matrix_recommendation <- sapply(model_predictions@items, 
+                      function(x){ as.integer(colnames(movie_ratings)[x]) })
+```
+
+
+```{r}
+matrix_recommendation[, 1:4]
+```
+
+The matrix above contains contain the `movieId` of each recommended movie, rows,  for the first four users, cloumns, in the test dataset.
+
+### Frequency Histogram
+
+```{r}
+num_items <- factor(table(matrix_recommendation))
+
+chart_title <- "Distribution of Items for UBCF"
+qplot(num_items) + ggtitle(chart_title)
+```
+
+Compared with the `IBCF`, the distribution of some movies that are recommended much more often than the others. 
+
+The maximum is more than 30, compared to $10$ for `IBCF`.
+
+### Top Movie Titles
+
+```{r}
+num_items_sorted <- sort(num_items, decreasing = TRUE)
+num_items_top <- head(num_items_sorted, n = 4)
+table_top <- data.frame(as.integer(names(num_items_top)), num_items_top)
+
+for (i in 1:4){
+  table_top[i,1] <- as.character(subset(movies, 
+                                         movies$movieId == table_top[i,1])$title)
+}
+colnames(table_top) <- c("Movie Titles", "# Items")
+head(table_top)
+```
+
+Comparison of the outcomes of both the `UBCF` with the `IBCF`, aids in finding useful insight on different methods. 
+
+The UBCF needs to access the initial data. Since it needs to keep the entire database in memory, it doesn't work well in the presence of a big rating matrix. 
+
+In addition, building the similarity matrix requires a lot of computing power and time.
+
+However, UBCF's accuracy is proven to be slightly more accurate than IBCF (I will also discuss it in the next section), so it's a good option if the dataset is not too big.
+
+## Evaluatiion of the Recommender Systems
+
+In order to compare the models' performances and choose the best suited model:
+
+* Prepare the data to evaluate performance
+* Evaluate the performance of some models
+* Choose the best performing models
+* Optimize model parameters
+
+## Data Preparation for the data to Evaluate Models
+
+* Splitting the data into `Training` and `Test` Sets
+* `Bootstrapping` Data
+* `K-Fold` Approach
+
+### Splitting Data
+
+Splitting the data into Training and Test Sets at a 80/20 proportion.
+
+```{r}
+train_percent <- 0.8
+```
+
+First, for each user in the test set, we need to define how the number of moviess to use, in order to generate recommendations. 
+
+To achieve this we need to check the minimum number of movies rated by users to be sure there will be no users with no movie to test.
+
+```{r}
+min(rowCounts(movie_ratings)) 
+keep <- 5 
+best_rating <- 3 
+n_eval <- 1
+```
+
+
+```{r}
+eval_sets <- evaluationScheme(data = movie_ratings, 
+                              method = "split",
+                              train = train_percent, 
+                              given = keep, 
+                              goodRating = best_rating, k = n_eval) 
+```
+
+
+```{r }
+
+eval_sets
+```
+
+
+```{r }
+getData(eval_sets, "train")
+getData(eval_sets, "known") 
+getData(eval_sets, "unknown") 
+
+qplot(rowCounts(getData(eval_sets, "unknown"))) + 
+  geom_histogram(binwidth = 10) + 
+  ggtitle("unknown moviess by the users")
+```
+
+This represents the unknown moviess by the users, varying quite a lot.
+
+### Bootstrapping 
+
+The same user can be sampled more than once during `bootstraping`.
+
+When the training set has the same size previously, this will be more users in the test set.
+
+```{r}
+eval_sets <- evaluationScheme(data = movie_ratings, 
+                              method = "bootstrap", 
+                              train = train_percent, 
+                              given = keep,
+                              goodRating = best_rating, 
+                              k = n_eval)
+
+table_train <- table(eval_sets@runsTrain[[1]])
+n_repetitions <- factor(as.vector(table_train))
+qplot(n_repetitions) + 
+  ggtitle("Repetitions in the Training Set")
+```
+
+Respresents that most of the users that have sampled lower than four times.
+
+### K-Fold Cross-Validation Approach
+
+K-Fold Cross-Validation yields is the most accurate, however, is the most resource intensive. 
+
+
+```{r}
+n_total <- 4
+eval_sets <- evaluationScheme(data = movie_ratings, 
+                              method = "cross-validation",
+                              k = n_total, 
+                              given = keep, 
+                              goodRating = best_rating)
+size_sets <- sapply(eval_sets@runsTrain, length)
+size_sets
+```
+
+When using the K-Fold approach, results in four sets of the same size 315.
+
+## Evaluation of Ratings
+
+K-Fold Approach is used for evaluation of the results: 
+
+* First, re-defining the evaluation sets.
+
+* Build IBCF model
+
+* Creating a matrix with predicted ratings.
+
+```{r}
+eval_sets <- evaluationScheme(data = movie_ratings, 
+                              method = "cross-validation",
+                              k = n_total, 
+                              given = keep, 
+                              goodRating = best_rating)
+```
+
+
+```{r}
+evaluation_for_model <- "IBCF"
+model_parameters <- NULL
+
+evaluate_model <- Recommender(data = getData(eval_sets, "train"),
+                                method = evaluation_for_model, parameter = model_parameters)
+```
+
+
+```{r}
+ri <- 10
+evaluate_prediction <- predict(object = evaluate_model, 
+                           newdata = getData(eval_sets, "known"), 
+                           n = ri, 
+                           type = "ratings")
+```
+
+
+```{r}
+qplot(rowCounts(evaluate_prediction)) + 
+  geom_histogram(binwidth = 10) +
+  ggtitle("Distribution of Movies, per user")
+```
+
+Represents the distribution of movies per user in the matrix of predicted ratings.
+
+### Compute Accuracy
+
+Most of the RMSEs (Root mean square errors) are in the range of 0.5 to 1.8:
+
+```{r}
+evaluate_accuracy <- calcPredictionAccuracy(x = evaluate_prediction, 
+                                        data = getData(eval_sets, "unknown"), 
+                                        byUser = TRUE)
+head(evaluate_accuracy)
+```
+
+
+```{r}
+qplot(evaluate_accuracy[, "RMSE"]) + 
+  geom_histogram(binwidth = 0.1) +
+  ggtitle("Distribution of  RMSE, by user")
+```
+
+
+```{r}
+evaluate_accuracy <- calcPredictionAccuracy(x = evaluate_prediction, 
+                                        data = getData(eval_sets, "unknown"), 
+                                        byUser = FALSE) 
+evaluate_accuracy
+```
+
+## Evaluation of Recommendations
+
+```{r}
+results <- evaluate(x = eval_sets, 
+                    method = evaluation_for_model, 
+                    n = seq(10, 100, 10))
+
+head(getConfusionMatrix(results)[[1]])
+```
+
+
+```{r }
+sun_col <- c("TP", "FP", "FN", "TN")
+indices_summed <- Reduce("+", getConfusionMatrix(results))[, sun_col]
+head(indices_summed)
+```
+
+#### ROC
+
+```{r}
+plot(results, annotate = TRUE, main = "ROC Curve")
+```
+
+
+```{r}
+plot(results, "prec/rec", annotate = TRUE, main = "Precision/Recall")
+```
+
+From the above graphs, if a small percentage of rated movies is recommended, the precision decreases. 
+
+At the same time, the higher percentage of rated movies that are recommended, the higher the recall.
+
+## Model Comparisons
+
+In order to compare different models, create a basline measure out of the following list:
+
+* Item-Based Collaborative Filtering - using the Cosine as the distance function
+* Item-based Collaborative Filtering - using the Pearson correlation as the distance function
+* User-based Collaborative Filtering - using the Cosine as the distance function
+* User-based Collaborative Filtering - using the Pearson correlation as the distance function
+* Random Recommendations 
+
+```{r}
+base_line <- list(
+IBCF_cosine = list(name = "IBCF", 
+                param = list(method = "cosine")),
+IBCF_pearson = list(name = "IBCF", 
+                param = list(method = "pearson")),
+UBCF_cosine = list(name = "UBCF", 
+                param = list(method = "cosine")),
+UBCF_pearson = list(name = "UBCF", 
+                param = list(method = "pearson")),
+Random = list(name = "RANDOM", param=NULL)
+)
+```
+
+
+
+```{r }
+n_recommendations <- c(1, 5, seq(10, 100, 10))
+results_list <- evaluate(x = eval_sets, 
+                         method = base_line, 
+                         n = n_recommendations)
+
+sapply(results_list, class) == "evaluationResults"
+```
+
+
+
+```{r}
+avg_matrices <- lapply(results_list, avg)
+head(avg_matrices$IBCF_cos[, 5:8])
+```
+
+## Plot - Best Fit Model
+
+ROC curves &  Precision/Recall Curves.
+
+```{r}
+plot(results_list, annotate = 1, legend = "topleft") 
+title("ROC Curve")
+
+plot(results_list, "prec/rec", annotate = 1, legend = "bottomright")
+title("Precision-Recall")
+```
+
+
+The UBCF with cosine distance performs the best out of all the models. 
+
+## Optimiziation 
+
+IBCF takes in consideration the k-nearest neighbor. 
+
+Tuning parameters ranging between 5 and 40.
+
+```{r}
+k <- c(5, 10, 20, 30, 40)
+base_line <- lapply(k, function(k){
+  list(name = "IBCF",
+       param = list(method = "cosine", k = k))
+})
+names(base_line) <- paste0("IBCF_k_", k)
+```
+
+Construct IBCF/Cosine Models with different values of the k-nearest neighbor.
+
+```{r}
+n_recommendations <- c(1, 5, seq(10, 100, 10))
+results_list <- evaluate(x = eval_sets, 
+                         method = base_line, 
+                         n = n_recommendations)
+
+plot(results_list, annotate = 1, legend = "topleft") 
+title("ROC Curve")
+```
+
+
+```{r}
+plot(results_list, "prec/rec", annotate = 1, legend = "bottomright")
+title("Precision-Recall")
+```
+
+The ROC Curve's Plot shows `k` having the biggest $AUC = 10$. 
+
+In additon. another good candidate is $5$, because it can never have a high TPR.
+
+Furthermore, the IBCF with k = 5 only recommends a few movies similar to the ratings. 
+
+Therefore, it cannot be the model used for recommendations.
+
+Based on the Precision/Recall Plot, $k$ should equal $10$ to achieve the highest recall. 
+
+In that event, if we are more interested in the Precision, we set $k$ to $5$.
+
+## Conslusion
+
+> User-Based Collaborative Filtering
+
+**Strengths**
+
+* User-Based Collaborative Filtering provides recommendations that are complimentary to the item the user are observing. 
+
+* This prvides stronger Recommendations than an Item-Based Recommender.
+
+**Weaknesses**
+
+* User-based Collaborative Filtering is a memeory intensive Collaborative Filtering that uses all user data in the database to create Recommendations. 
+
+* However, comparing the pairwise correlation of every user in your dataset is not scalable. The more users the more time it would take to compute the Recommendations. 
+
+## Shiny Application
+
+For the project, the developed and evaluated a Collaborative Filtering Recommender System was implemented for the Recommendation of Movies. 
+
+The deployment of a Shiny R Application demonstrates the User-Based Collaborative Filtering Approach for the Recommendation Model.
+
+> Implementation
+
+[What2Watch](https://jpsimone.shinyapps.io/Recommendation_System_Final_Project/)
+
+## Appendix 
+
+[Source Code](https://github.com/josephsimone/Data-612/tree/master/final_project)
